@@ -1,38 +1,38 @@
-require('dotenv').config();
-const express = require("express");
+const WebSocket = require("ws");
 const http = require("http");
-const bodyParser = require("body-parser");
-const { handleTwilioCall } = require("./lib/twilioHandler");
-const { setupAudioStream, wss } = require("./lib/audio-stream");
 
-const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end("WebSocket server is alive\n");
+});
 
-app.post("/twilio/incoming", handleTwilioCall);
+const wss = new WebSocket.Server({ noServer: true });
 
-const server = http.createServer(app);
-
-setupAudioStream(server);
-
-// 🔥 DEBUG: Handle WebSocket upgrades manually and log all paths
 server.on("upgrade", (req, socket, head) => {
-  console.log(`[UPGRADE] Request for ${req.url}`);
+  console.log(`[UPGRADE] Request received at: ${req.url}`);
 
-  if (req.url.startsWith("/audio-stream")) {
-    console.log(`[UPGRADE] Passing upgrade to wss handler for ${req.url}`);
+  if (req.url.startsWith("/audio-stream/")) {
     wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
+      const sessionId = req.url.split("/").pop();
+      console.log(`[WS] WebSocket connected for session: ${sessionId}`);
+
+      ws.on("message", (msg) => {
+        console.log(`[WS] Message from ${sessionId}: ${msg}`);
+      });
+
+      ws.on("close", () => {
+        console.log(`[WS] Connection closed: ${sessionId}`);
+      });
     });
   } else {
-    console.log(`[UPGRADE] Unknown path: ${req.url}`);
+    console.log(`[UPGRADE] Invalid path: ${req.url}`);
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
     socket.destroy();
   }
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 HTTP + WebSocket server listening on port ${PORT}`);
+  console.log(`🚀 Raw WebSocket server listening on port ${PORT}`);
 });
