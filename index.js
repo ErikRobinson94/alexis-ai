@@ -1,42 +1,41 @@
 require('dotenv').config();
 const express = require("express");
-const http = require("http");
+const https = require("https");
+const fs = require("fs");
+const path = require("path");
 const bodyParser = require("body-parser");
 const { handleTwilioCall } = require("./lib/twilioHandler");
-const { setupAudioStream } = require("./lib/audio-stream");
-const WebSocket = require("ws");
+const { setupAudioStream, wss } = require("./lib/audio-stream");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Middleware
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// HTTP server
-const server = http.createServer(app);
+// Routes
+app.post("/twilio/incoming", handleTwilioCall);
 
-// Create WebSocket server outside setupAudioStream
-const wss = new WebSocket.Server({ noServer: true });
+// HTTPS server (we're on Railway, so we don’t use certs here)
+const server = https.createServer({}, app);
 
-// Upgrade event for WebSocket handshake
-server.on("upgrade", (req, socket, head) => {
-  console.log(`[DEBUG] Upgrade request received: ${req.url}`);
+// WebSocket setup
+setupAudioStream(server);
 
-  // Only handle upgrades to `/audio-stream/...`
-  if (req.url.startsWith("/audio-stream")) {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit("connection", ws, req);
+// Explicitly handle WebSocket upgrade requests
+server.on("upgrade", (request, socket, head) => {
+  const pathname = request.url;
+
+  if (pathname.startsWith("/audio-stream")) {
+    console.log(`[DEBUG] Handling WebSocket upgrade for ${pathname}`);
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit("connection", ws, request);
     });
   } else {
-    socket.destroy(); // reject other upgrade paths
+    socket.destroy();
   }
 });
-
-// Attach WebSocket handlers
-setupAudioStream(wss);
-
-// Twilio webhook
-app.post("/twilio/incoming", handleTwilioCall);
 
 // Start server
 server.listen(PORT, () => {
