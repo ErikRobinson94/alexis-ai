@@ -1,8 +1,6 @@
 require('dotenv').config();
 const express = require("express");
-const https = require("https");
-const fs = require("fs");
-const path = require("path");
+const http = require("http");
 const bodyParser = require("body-parser");
 const { handleTwilioCall } = require("./lib/twilioHandler");
 const { setupAudioStream, wss } = require("./lib/audio-stream");
@@ -10,34 +8,31 @@ const { setupAudioStream, wss } = require("./lib/audio-stream");
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Middleware
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Routes
 app.post("/twilio/incoming", handleTwilioCall);
 
-// HTTPS server (we're on Railway, so we don’t use certs here)
-const server = https.createServer({}, app);
+const server = http.createServer(app);
 
-// WebSocket setup
 setupAudioStream(server);
 
-// Explicitly handle WebSocket upgrade requests
-server.on("upgrade", (request, socket, head) => {
-  const pathname = request.url;
+// 🔥 DEBUG: Handle WebSocket upgrades manually and log all paths
+server.on("upgrade", (req, socket, head) => {
+  console.log(`[UPGRADE] Request for ${req.url}`);
 
-  if (pathname.startsWith("/audio-stream")) {
-    console.log(`[DEBUG] Handling WebSocket upgrade for ${pathname}`);
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request);
+  if (req.url.startsWith("/audio-stream")) {
+    console.log(`[UPGRADE] Passing upgrade to wss handler for ${req.url}`);
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
     });
   } else {
+    console.log(`[UPGRADE] Unknown path: ${req.url}`);
+    socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
     socket.destroy();
   }
 });
 
-// Start server
 server.listen(PORT, () => {
-  console.log(`🚀 Server + WebSocket listening on port ${PORT}`);
+  console.log(`🚀 HTTP + WebSocket server listening on port ${PORT}`);
 });
