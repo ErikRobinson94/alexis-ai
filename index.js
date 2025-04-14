@@ -10,26 +10,44 @@ const { setupAudioStream } = require("./lib/audio-stream");
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Middleware
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
+// Route
 app.post("/twilio/incoming", handleTwilioCall);
 
+// HTTPS Server
 const server = https.createServer(
   {
-    key: fs.readFileSync(path.join(__dirname, "certs", "key.pem")),
-    cert: fs.readFileSync(path.join(__dirname, "certs", "cert.pem")),
+    key: fs.existsSync(path.join(__dirname, "certs", "key.pem"))
+      ? fs.readFileSync(path.join(__dirname, "certs", "key.pem"))
+      : undefined,
+    cert: fs.existsSync(path.join(__dirname, "certs", "cert.pem"))
+      ? fs.readFileSync(path.join(__dirname, "certs", "cert.pem"))
+      : undefined,
   },
   app
 );
 
-// Log any WebSocket upgrade attempts
-server.on("upgrade", (req) => {
+// Fallback to HTTP server if no certs (e.g., in production)
+if (!server.key || !server.cert) {
+  console.log("🔓 No SSL certs found, falling back to plain HTTP.");
+  server = require("http").createServer(app);
+}
+
+// Upgrade handler for WebSocket upgrade
+server.on("upgrade", (req, socket, head) => {
   console.log(`[DEBUG] Upgrade request received: ${req.url}`);
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit("connection", ws, req);
+  });
 });
 
-setupAudioStream(server);
+// Setup WebSocket server
+const wss = setupAudioStream(server);
 
+// Start server
 server.listen(PORT, () => {
-  console.log(`🔐 Server + WebSocket listening on port ${PORT}`);
+  console.log(`🚀 Server + WebSocket listening on port ${PORT}`);
 });
