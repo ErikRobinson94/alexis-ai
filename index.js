@@ -1,51 +1,42 @@
 require('dotenv').config();
 const express = require("express");
-const https = require("https");
-const fs = require("fs");
-const path = require("path");
+const http = require("http");
 const bodyParser = require("body-parser");
 const { handleTwilioCall } = require("./lib/twilioHandler");
 const { setupAudioStream } = require("./lib/audio-stream");
+const WebSocket = require("ws");
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Middleware
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-// Route
-app.post("/twilio/incoming", handleTwilioCall);
+// HTTP server
+const server = http.createServer(app);
 
-// HTTPS Server
-const server = https.createServer(
-  {
-    key: fs.existsSync(path.join(__dirname, "certs", "key.pem"))
-      ? fs.readFileSync(path.join(__dirname, "certs", "key.pem"))
-      : undefined,
-    cert: fs.existsSync(path.join(__dirname, "certs", "cert.pem"))
-      ? fs.readFileSync(path.join(__dirname, "certs", "cert.pem"))
-      : undefined,
-  },
-  app
-);
+// Create WebSocket server outside setupAudioStream
+const wss = new WebSocket.Server({ noServer: true });
 
-// Fallback to HTTP server if no certs (e.g., in production)
-if (!server.key || !server.cert) {
-  console.log("🔓 No SSL certs found, falling back to plain HTTP.");
-  server = require("http").createServer(app);
-}
-
-// Upgrade handler for WebSocket upgrade
+// Upgrade event for WebSocket handshake
 server.on("upgrade", (req, socket, head) => {
   console.log(`[DEBUG] Upgrade request received: ${req.url}`);
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    wss.emit("connection", ws, req);
-  });
+
+  // Only handle upgrades to `/audio-stream/...`
+  if (req.url.startsWith("/audio-stream")) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit("connection", ws, req);
+    });
+  } else {
+    socket.destroy(); // reject other upgrade paths
+  }
 });
 
-// Setup WebSocket server
-const wss = setupAudioStream(server);
+// Attach WebSocket handlers
+setupAudioStream(wss);
+
+// Twilio webhook
+app.post("/twilio/incoming", handleTwilioCall);
 
 // Start server
 server.listen(PORT, () => {
